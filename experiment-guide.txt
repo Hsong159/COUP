@@ -1,0 +1,574 @@
+================================================================================
+  NEURAL AI EXPERIMENT GUIDE
+  How to train and test the Neural Network AI in the Coup card game
+================================================================================
+
+This guide walks you through everything from opening the project to running
+experiments and interpreting results. No prior knowledge of the code is needed.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 1 — WHAT YOU NEED INSTALLED
+────────────────────────────────────────────────────────────────────────────────
+
+You only need two things:
+  1. A terminal (Mac: Terminal app or iTerm2)
+  2. Python 3 (already installed on all modern Macs)
+
+To verify Python 3 is installed, open Terminal and run:
+
+    python3 --version
+
+You should see something like "Python 3.11.0". Any version 3.x works.
+You do NOT need Node.js, npm, or any other tools.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 2 — PROJECT FILES YOU NEED TO KNOW ABOUT
+────────────────────────────────────────────────────────────────────────────────
+
+The project lives at:
+    /Users/hsong159/Desktop/COUP/mycoup/
+
+The files relevant to the Neural AI experiment are:
+
+  neural-ai.js      — the Neural Network AI code. This is where you change
+                      constants to run experiments.
+
+  aicontest.html    — the tournament/simulation page. You run hundreds of
+                      games here and see win rate results.
+
+  index.html        — the interactive game page. You can play manually against
+                      the Neural AI here.
+
+  neural-ai.txt     — detailed documentation of every function and design
+                      choice in neural-ai.js. Read this if you want to
+                      understand WHY something is written the way it is.
+
+You will only ever edit neural-ai.js to change experiment parameters.
+You never need to edit aicontest.html or index.html.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 3 — STARTING THE LOCAL WEB SERVER
+────────────────────────────────────────────────────────────────────────────────
+
+Web browsers block loading local JavaScript files directly from your filesystem
+for security reasons. You need a simple local web server to serve the files.
+
+Step 1 — Open Terminal.
+
+Step 2 — Navigate to the project folder:
+
+    cd /Users/...
+
+Step 3 — Start the server:
+
+    python3 -m http.server 8080
+
+You should see:
+    Serving HTTP on 0.0.0.0 port 8080 (http://0.0.0.0:8080/) ...
+
+Step 4 — Open your browser (Chrome recommended) and go to:
+
+     
+
+You should see the "Coup AI Contest" simulation page.
+
+NOTE: Keep the Terminal window open while you are running experiments.
+      The server stops if you close it.
+
+TO STOP THE SERVER at any time, go back to Terminal and press:
+    Ctrl + C
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 4 — UNDERSTANDING THE SIMULATION PAGE (aicontest.html)
+────────────────────────────────────────────────────────────────────────────────
+
+The page has these controls:
+
+  Number of Players     — how many AIs play against each other (2 to 5)
+  Number of Games       — how many games to simulate (e.g. 1000)
+  AI Type dropdowns     — one per player, select the AI type for each seat
+  Quick Preset buttons  — shortcut buttons to set all players at once
+  Run Simulation        — starts the experiment
+
+After the simulation finishes, a results table appears showing:
+  - Win count and win rate (%) for each AI
+  - Average coins at game end
+  - Average turns survived
+  - A [WINNER] label on the statistically best performer
+
+The win rate is the most important number to watch.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 5 — UNDERSTANDING THE NEURAL AI OPTIONS
+────────────────────────────────────────────────────────────────────────────────
+
+In each AI Type dropdown you will see:
+
+  Random AI (Baseline)               — picks actions randomly, no strategy
+  Statistical AI (Probability-Based) — uses probability tracking
+  Challenger AI (Game Tree Search)   — uses advanced search (strongest built-in AI)
+  Minimax AI (Legacy)                — older version of Challenger
+  Neural Network AI (64/32)          — Neural AI with hidden layers of size 64 and 32
+  Neural Network AI (32/16)          — Neural AI with smaller hidden layers (32 and 16)
+
+The two Neural AI variants are the ones you will be training.
+"64/32" means the network has 64 neurons in the first hidden layer and 32 in
+the second. "32/16" has a smaller, faster network with less learning capacity.
+
+Their learned weights are saved separately in your browser's localStorage, so
+they remember what they learned between sessions.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 6 — THE BASELINE EXPERIMENT
+────────────────────────────────────────────────────────────────────────────────
+
+Before changing anything, run a baseline to see how well the Neural AI performs
+with default settings. This gives you a reference point to compare against.
+
+STEP 1 — Reset saved weights (start fresh).
+
+Open your browser's Developer Console on the aicontest.html page:
+    Press: Cmd + Option + J   (Mac)
+
+In the console, type the following and press Enter:
+
+    localStorage.removeItem('coup_neural_ai_weights_v3_64_32')
+    localStorage.removeItem('coup_neural_ai_weights_v3_32_16')
+
+You should see "undefined" returned — this is correct, it means the weights
+were cleared. The Neural AI will now start learning from scratch.
+
+Close the console (press Escape or Cmd + Option + J again).
+
+STEP 2 — Hard refresh the page to make sure the cleared weights take effect:
+
+    Press: Cmd + Shift + R
+
+STEP 3 — Configure the simulation:
+
+  Number of Players:   3
+  Number of Games:     1000
+  AI 1:  Neural Network AI (64/32)
+  AI 2:  Statistical AI (Probability-Based)
+  AI 3:  Random AI (Baseline)
+
+STEP 4 — Click "Run Simulation" and wait for it to finish.
+         With 1000 games this takes roughly 1–3 minutes.
+
+STEP 5 — Record the results in a notebook or spreadsheet:
+
+  Example table:
+  ┌──────────────────────┬───────────┬──────────┐
+  │ AI Type              │ Win Count │ Win Rate │
+  ├──────────────────────┼───────────┼──────────┤
+  │ Neural (64/32)       │    ???    │  ??.?%   │
+  │ Statistical          │    ???    │  ??.?%   │
+  │ Random               │    ???    │  ??.?%   │
+  └──────────────────────┴───────────┴──────────┘
+
+Expected baseline result:
+  Random AI wins ~20-25% in a 3-player game (roughly 33% is pure random).
+  Neural AI fresh from zero will likely win 15-25% — below Statistical AI.
+  This is normal. The AI has barely trained. Do not be discouraged.
+
+NOTE: Keep the browser tab visible and do not switch to other apps while
+      simulating. Browsers throttle JavaScript on inactive tabs which slows
+      down the simulation significantly.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 7 — HOW TO CHANGE EXPERIMENT PARAMETERS
+────────────────────────────────────────────────────────────────────────────────
+
+All experiment parameters are in neural-ai.js. Open it in any text editor.
+The file is at:
+    /Users/hsong159/Desktop/COUP/mycoup/neural-ai.js
+
+The constants block is near the top of the file and looks like this:
+
+    const NEURAL_CFG = {
+        STATE_DIM:      73,
+        ACTION_DIM:     16,
+        HIDDEN_1:       64,
+        HIDDEN_2:       32,
+        LEARNING_RATE:  0.001,
+        GAMMA:          0.99,
+        ENTROPY_COEFF:  0.01,
+        MAX_PLAYERS:    5,
+        MAX_OPPONENTS:  4,
+        CHARACTERS:     [...],
+        ACTIONS:        [...],
+        TRAIN_EVERY:    10,
+        MAX_TRAJ_STEPS: 60,
+    };
+
+The ones you will change for experiments are:
+
+  LEARNING_RATE   — how fast the network updates. Default: 0.001
+  GAMMA           — how much early decisions are credited. Default: 0.99
+  ENTROPY_COEFF   — how much random exploration is encouraged. Default: 0.01
+  TRAIN_EVERY     — how many games between each training step. Default: 10
+  MAX_TRAJ_STEPS  — max decisions saved per game for training. Default: 60
+
+DO NOT change STATE_DIM, ACTION_DIM, MAX_PLAYERS, MAX_OPPONENTS, CHARACTERS,
+or ACTIONS. These control the network structure and game rules — changing them
+will break the simulation.
+
+IMPORTANT: After saving neural-ai.js, you MUST:
+  1. Hard refresh the browser:   Cmd + Shift + R
+  2. Clear old weights (see Part 6, Step 1) if you changed HIDDEN_1 or HIDDEN_2
+
+You do NOT need to restart the Python server when editing neural-ai.js.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 8 — EXPERIMENT A: TUNING LEARNING RATE
+────────────────────────────────────────────────────────────────────────────────
+
+Learning rate is the single most impactful constant to tune. It controls how
+big each gradient update step is.
+
+WHAT TO DO:
+
+Run the same simulation (3 players, Neural vs Statistical vs Random) nine times
+total — three learning rates × three trial sizes. Clear weights and hard
+refresh between EVERY run.
+
+  Run 1–3:  LEARNING_RATE: 0.0005   at 1000, 3000, and 5000 games
+  Run 4–6:  LEARNING_RATE: 0.001    at 1000, 3000, and 5000 games
+  Run 7–9:  LEARNING_RATE: 0.003    at 1000, 3000, and 5000 games
+
+HOW TO CHANGE IT:
+
+  1. Open neural-ai.js in a text editor
+  2. Find the line:    LEARNING_RATE:  0.001,
+  3. Change 0.001 to your chosen value
+  4. Save the file (Cmd + S)
+  5. In the browser: clear weights (see Part 6 Step 1), then Cmd + Shift + R
+  6. Set the Number of Games to 1000 (or 3000 or 5000), run, and record
+  7. Clear weights and hard refresh again before changing the game count
+     (each trial must start from scratch — do NOT continue from a previous run)
+
+RECORD YOUR RESULTS:
+  ┌───────────────┬──────────────┬──────────────┬──────────────┐
+  │ Learning Rate │  1000 games  │  3000 games  │  5000 games  │
+  ├───────────────┼──────────────┼──────────────┼──────────────┤
+  │ 0.0005        │              │              │              │
+  │ 0.001         │              │              │              │
+  │ 0.003         │              │              │              │
+  └───────────────┴──────────────┴──────────────┴──────────────┘
+  (fill in Neural win rate % for each cell)
+
+WHAT TO EXPECT:
+  0.003 will often win more games early (1000 games) because it updates faster.
+  However at 5000 games a too-high learning rate may become unstable and its
+  win rate may plateau or drop. 0.0005 may be slow early but more stable long
+  term. The best learning rate is whichever cell has the highest win rate at
+  5000 games.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 9 — EXPERIMENT B: TUNING ENTROPY (EXPLORATION)
+────────────────────────────────────────────────────────────────────────────────
+
+ENTROPY_COEFF controls how much the AI is encouraged to try different actions
+rather than always doing the same thing it already learned.
+
+High entropy = more exploration = slower to commit but discovers better plays.
+Low entropy  = more exploitation = sticks to what it knows, may get stuck.
+
+WHAT TO DO:
+
+Run the same simulation (3 players, Neural vs Statistical vs Random) nine times
+total — three entropy values × three trial sizes. Clear weights and hard
+refresh between EVERY run.
+
+  Run 1–3:  ENTROPY_COEFF: 0.001   at 1000, 3000, and 5000 games
+  Run 4–6:  ENTROPY_COEFF: 0.01    at 1000, 3000, and 5000 games
+  Run 7–9:  ENTROPY_COEFF: 0.05    at 1000, 3000, and 5000 games
+
+Follow the same steps as Experiment A to change the value, clear weights,
+hard refresh, and record results for each cell.
+
+RECORD YOUR RESULTS:
+  ┌────────────────┬──────────────┬──────────────┬──────────────┐
+  │ Entropy Coeff  │  1000 games  │  3000 games  │  5000 games  │
+  ├────────────────┼──────────────┼──────────────┼──────────────┤
+  │ 0.001          │              │              │              │
+  │ 0.01           │              │              │              │
+  │ 0.05           │              │              │              │
+  └────────────────┴──────────────┴──────────────┴──────────────┘
+  (fill in Neural win rate % for each cell)
+
+WHAT TO EXPECT:
+  Higher entropy (0.05) usually helps in the first 1000 games because the AI
+  is still discovering what works. At 5000 games, lower entropy (0.01) may
+  overtake it as the AI shifts from exploring to exploiting what it learned.
+  Very low entropy (0.001) often leads to the AI repeating the same actions
+  and failing to improve across all trial sizes.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 10 — EXPERIMENT C: TUNING TRAIN_EVERY (TRAINING FREQUENCY)
+────────────────────────────────────────────────────────────────────────────────
+
+TRAIN_EVERY controls how many games the AI plays before running one gradient
+update (training step). The default is 10 — meaning the network updates its
+weights once every 10 games.
+
+  Lower value (e.g. 10) = updates more often = learns faster but each update
+                          is noisier because it is based on fewer games.
+  Higher value (e.g. 50) = updates less often = each update uses more data
+                           and is more stable, but the AI learns more slowly
+                           per game and the simulation runs faster.
+
+This experiment also directly affects SPEED — higher TRAIN_EVERY means fewer
+expensive TensorFlow gradient steps per 1000 games, so the simulation runs
+noticeably faster.
+
+WHAT TO DO:
+
+Run the same simulation (3 players, Neural vs Statistical vs Random) nine times
+total — three TRAIN_EVERY values × three trial sizes. Clear weights and hard
+refresh between EVERY run.
+
+  Run 1–3:  TRAIN_EVERY: 20   at 1000, 3000, and 5000 games
+  Run 4–6:  TRAIN_EVERY: 30   at 1000, 3000, and 5000 games
+  Run 7–9:  TRAIN_EVERY: 50   at 1000, 3000, and 5000 games
+
+HOW TO CHANGE IT:
+
+  1. Open neural-ai.js in a text editor
+  2. Find the line:    TRAIN_EVERY:    10,
+  3. Change 10 to your chosen value (20, 30, or 50)
+  4. Save the file (Cmd + S)
+  5. In the browser: clear weights (see Part 6 Step 1), then Cmd + Shift + R
+  6. Set the Number of Games, run, and record
+  7. Clear weights and hard refresh again before the next trial
+
+RECORD YOUR RESULTS:
+  ┌─────────────┬──────────────┬──────────────┬──────────────┐
+  │ TRAIN_EVERY │  1000 games  │  3000 games  │  5000 games  │
+  ├─────────────┼──────────────┼──────────────┼──────────────┤
+  │ 10          │              │              │              │
+  │ 30          │              │              │              │
+  │ 50          │              │              │              │
+  └─────────────┴──────────────┴──────────────┴──────────────┘
+  (fill in Neural win rate % for each cell)
+
+WHAT TO EXPECT:
+  TRAIN_EVERY=20 behaves most similarly to the default (10) and will likely
+  have the highest win rate at 1000 games since it updates most frequently.
+  TRAIN_EVERY=50 will run the simulation noticeably faster but may have a
+  lower win rate at 1000 games because the network has updated far fewer times.
+  At 5000 games the gap between values often narrows — a larger batch of games
+  per update can sometimes produce more stable learning than frequent small
+  updates. Compare the 5000-game column across all three rows to find the
+  best balance of speed and learning quality.
+
+COMBINING WITH PREVIOUS EXPERIMENTS:
+  Once you have results from Parts 8, 9, and 10, pick the best value from
+  each experiment and run one final combined simulation using all three
+  optimal values together. This is your best configuration.
+
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 11 — EXPERIMENT C: LONG TRAINING RUN
+────────────────────────────────────────────────────────────────────────────────
+
+1000 games is very few for reinforcement learning. To see real improvement,
+run a much longer simulation. This experiment uses your best settings from
+Experiments A and B.
+
+WHAT TO DO:
+
+  1. Set your best LEARNING_RATE and ENTROPY_COEFF from Experiments A and B
+  2. Save neural-ai.js, clear weights, hard refresh
+  3. Run: 3 players, 5000 games, Neural(64/32) vs Statistical vs Challenger
+  4. Record win rate at 1000 game intervals by watching the live results table
+     (it updates every 100 games automatically)
+
+RECORD WIN RATE OVER TIME:
+  ┌────────────┬──────────────────┐
+  │ Games Played│ Neural Win Rate │
+  ├────────────┼──────────────────┤
+  │ 1000        │                  │
+  │ 2000        │                  │
+  │ 3000        │                  │
+  │ 4000        │                  │
+  │ 5000        │                  │
+  └────────────┴──────────────────┘
+
+IMPORTANT: Weights are saved to localStorage after every 10 games. If you
+close the browser mid-run, the progress is NOT lost. Re-open
+http://localhost:8080/aicontest.html and run again — it will continue
+training from where it left off.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 12 — EXPERIMENT D: 64/32 vs 32/16 NETWORK SIZE
+────────────────────────────────────────────────────────────────────────────────
+
+This experiment compares whether a bigger or smaller network learns Coup better.
+
+WHAT TO DO:
+
+Run ONE simulation with both Neural AIs competing at the same time:
+
+  Number of Players: 4
+  AI 1: Neural Network AI (64/32)
+  AI 2: Neural Network AI (32/16)
+  AI 3: Statistical AI
+  AI 4: Random AI
+  Games: 2000
+
+Since both Neural AIs play simultaneously, they BOTH train during the same
+simulation. Their weights are saved separately so they don't interfere.
+
+Clear BOTH sets of weights before starting:
+
+  In browser console (Cmd + Option + J):
+    localStorage.removeItem('coup_neural_ai_weights_v3_64_32')
+    localStorage.removeItem('coup_neural_ai_weights_v3_32_16')
+
+Then Cmd + Shift + R and run.
+
+RECORD YOUR RESULTS:
+  ┌──────────────────────┬───────────┬──────────┐
+  │ AI Type              │ Win Count │ Win Rate │
+  ├──────────────────────┼───────────┼──────────┤
+  │ Neural (64/32)       │           │          │
+  │ Neural (32/16)       │           │          │
+  │ Statistical          │           │          │
+  │ Random               │           │          │
+  └──────────────────────┴───────────┴──────────┘
+
+WHAT TO EXPECT:
+  64/32 has more neurons so it can theoretically learn more complex patterns,
+  but it is also slower to train per game. 32/16 may converge to a decent
+  strategy faster early on. Neither is guaranteed to be better in 2000 games.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 13 — CHECKING SAVED WEIGHTS IN THE BROWSER CONSOLE
+────────────────────────────────────────────────────────────────────────────────
+
+Open the browser console on aicontest.html:
+    Cmd + Option + J
+
+USEFUL COMMANDS:
+
+Check if weights are saved for the 64/32 network:
+    localStorage.getItem('coup_neural_ai_weights_v3_64_32')
+  → Returns a long JSON string if weights exist, or "null" if not yet saved.
+
+Check if weights are saved for the 32/16 network:
+    localStorage.getItem('coup_neural_ai_weights_v3_32_16')
+
+Clear weights for the 64/32 network (start fresh):
+    localStorage.removeItem('coup_neural_ai_weights_v3_64_32')
+
+Clear weights for the 32/16 network (start fresh):
+    localStorage.removeItem('coup_neural_ai_weights_v3_32_16')
+
+Clear ALL saved weights at once:
+    localStorage.removeItem('coup_neural_ai_weights_v3_64_32')
+    localStorage.removeItem('coup_neural_ai_weights_v3_32_16')
+
+NOTE: After clearing weights, always hard refresh (Cmd + Shift + R) before
+      starting a new simulation so the page loads fresh with no weights.
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 14 — QUICK REFERENCE: FULL EXPERIMENT WORKFLOW
+────────────────────────────────────────────────────────────────────────────────
+
+Every time you want to run a clean experiment from scratch:
+
+TERMINAL (do once per session):
+    cd /Users/hsong159/Desktop/COUP/mycoup
+    python3 -m http.server 8080
+
+BROWSER:
+    Go to: http://localhost:8080/aicontest.html
+
+FOR EACH EXPERIMENT RUN:
+
+  Step 1 — Edit neural-ai.js with your chosen constants (save with Cmd + S)
+
+  Step 2 — Open browser console (Cmd + Option + J) and clear weights:
+               localStorage.removeItem('coup_neural_ai_weights_v3_64_32')
+               localStorage.removeItem('coup_neural_ai_weights_v3_32_16')
+
+  Step 3 — Hard refresh: Cmd + Shift + R
+
+  Step 4 — Set up the simulation (players, games, AI types)
+
+  Step 5 — Click "Run Simulation"
+
+  Step 6 — Record the win rate results
+
+  Step 7 — Repeat from Step 1 with different constants
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 15 — TROUBLESHOOTING
+────────────────────────────────────────────────────────────────────────────────
+
+PROBLEM: The page won't load or shows a blank screen.
+FIX: Make sure the Python server is running. Check Terminal — you should see
+     "Serving HTTP on 0.0.0.0 port 8080". If not, run the server command again.
+
+PROBLEM: The simulation gets stuck (progress bar stops moving).
+FIX: Open the browser console (Cmd + Option + J) and check for red error
+     messages. Usually this means a JavaScript error. Hard refresh and try again.
+     If it still gets stuck, clear weights and hard refresh.
+
+PROBLEM: I changed neural-ai.js but the simulation behaves the same.
+FIX: You must hard refresh (Cmd + Shift + R) after every file change. A normal
+     refresh (Cmd + R) uses the cached version of the file.
+
+PROBLEM: Neural AI win rate is 0% or below Random AI.
+FIX: This is normal for the first 500–1000 games. The network starts from
+     random weights and needs many games to learn. Keep running. If it doesn't
+     improve after 3000 games, try a higher LEARNING_RATE (0.003).
+
+PROBLEM: "Neural Network AI (Learning)" appears in the dropdown.
+FIX: This is a leftover option that does nothing useful. Ignore it and only
+     use "Neural Network AI (64/32)" or "Neural Network AI (32/16)".
+
+PROBLEM: The simulation slows down dramatically after a while.
+FIX: TensorFlow.js can accumulate memory over thousands of games. Refresh the
+     page (weights are saved so nothing is lost) and continue the simulation.
+
+PROBLEM: I want to run experiments overnight but the screen locks.
+FIX: Go to System Settings → Lock Screen → set "Turn off display" to Never
+     while plugged in. Keep the browser window visible (not minimised).
+
+
+────────────────────────────────────────────────────────────────────────────────
+PART 16 — WHAT GOOD RESULTS LOOK LIKE
+────────────────────────────────────────────────────────────────────────────────
+
+In a 3-player game (Neural vs Statistical vs Random), rough benchmarks:
+
+  After 500 games:   Neural wins ~15–25%  (still mostly random)
+  After 1000 games:  Neural wins ~20–30%  (starting to learn basic patterns)
+  After 3000 games:  Neural wins ~30–40%  (competitive with Statistical AI)
+  After 5000+ games: Neural wins ~35–45%  (potentially beating Statistical AI)
+
+A win rate above 33% means the Neural AI is doing better than random chance
+in a 3-player game. A win rate above Statistical AI's win rate means the
+Neural AI has learned to play Coup better than a hand-coded probability AI.
+
+If your Neural AI consistently wins over 35% after 3000 games, your
+hyperparameter settings are working well.
+
+================================================================================

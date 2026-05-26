@@ -1,0 +1,606 @@
+================================================================================
+NEURAL-AI.JS - CURRENT DESIGN DOCUMENT
+================================================================================
+
+This document describes the current implementation of neural-ai.js. The file
+implements a TensorFlow.js policy-gradient AI for Coup using REINFORCE-style
+learning. It handles action selection, challenge decisions, block decisions,
+block-claim selection, end-of-game reward processing, localStorage persistence,
+and light integration with index.html through DOMContentLoaded monkey patches.
+
+
+--------------------------------------------------------------------------------
+1. HIGH-LEVEL PURPOSE
+--------------------------------------------------------------------------------
+
+NeuralAI is a learning AI player for Coup. Instead of using fixed heuristics, it
+maintains a neural network policy. During a game, each decision is sampled from
+one of the network's output heads. At the end of the game, the AI receives a
+terminal reward, propagates that reward backward over its saved decisions, and
+updates the neural network so decisions that led to better outcomes become more
+likely in similar future states.
+
+The implementation is intentionally browser-native:
+
+  - It uses TensorFlow.js.
+  - It stores weights in localStorage.
+  - It requires no build step.
+  - It can be added to index.html without manually editing index.html, because
+    neural-ai.js injects dropdown options and patches startGame/checkGameOver.
+  - It also works with aicontest.html, which creates NeuralAI engines directly.
+
+
+--------------------------------------------------------------------------------
+2. TENSORFLOW.JS LOADING
+--------------------------------------------------------------------------------
+
+At the top of the file, neural-ai.js checks whether the global tf object exists:
+
+  if (typeof tf === 'undefined') {
+      document.write('<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"><\/script>');
+  }
+
+If TensorFlow.js is missing, it is loaded from jsDelivr. document.write is used
+because, while the browser is still parsing the page, it synchronously inserts
+and executes the TensorFlow.js script before the rest of neural-ai.js continues.
+
+This keeps neural-ai.js self-contained, but it also means the neural AI depends
+on network access unless TensorFlow.js is already present on the page.
+
+
+--------------------------------------------------------------------------------
+3. CONFIGURATION CONSTANTS
+--------------------------------------------------------------------------------
+
+All major neural AI settings live in NEURAL_CFG.
+
+STATE_DIM = 73
+  The fixed length of the state vector given to the model.
+
+  Exact 73-dimension state vector layout:
+
+  Character order:
+    0 duke
+    1 assassin
+    2 captain
+    3 ambassador
+    4 contessa
+
+  Action order:
+    0 income
+    1 foreign-aid
+    2 tax
+    3 exchange
+    4 coup
+    5 assassinate
+    6 steal
+
+  Decision type order:
+    0 chooseAction
+    1 challenge
+    2 block
+    3 blockClaim
+
+  Indices 0-39: per-player public features, 5 player slots x 8 values.
+
+    For each player slot:
+      offset + 0: coins / 12.0
+      offset + 1: active influence count / 2.0
+      offset + 2: eliminated flag, 1 if eliminated else 0
+      offset + 3: revealed duke count
+      offset + 4: revealed assassin count
+      offset + 5: revealed captain count
+      offset + 6: revealed ambassador count
+      offset + 7: revealed contessa count
+
+    Player slot 0:
+      0  player 0 coins / 12
+      1  player 0 active influence / 2
+      2  player 0 eliminated flag
+      3  player 0 revealed dukes
+      4  player 0 revealed assassins
+      5  player 0 revealed captains
+      6  player 0 revealed ambassadors
+      7  player 0 revealed contessas
+
+    Player slot 1:
+      8  player 1 coins / 12
+      9  player 1 active influence / 2
+      10 player 1 eliminated flag
+      11 player 1 revealed dukes
+      12 player 1 revealed assassins
+      13 player 1 revealed captains
+      14 player 1 revealed ambassadors
+      15 player 1 revealed contessas
+
+    Player slot 2:
+      16 player 2 coins / 12
+      17 player 2 active influence / 2
+      18 player 2 eliminated flag
+      19 player 2 revealed dukes
+      20 player 2 revealed assassins
+      21 player 2 revealed captains
+      22 player 2 revealed ambassadors
+      23 player 2 revealed contessas
+
+    Player slot 3:
+      24 player 3 coins / 12
+      25 player 3 active influence / 2
+      26 player 3 eliminated flag
+      27 player 3 revealed dukes
+      28 player 3 revealed assassins
+      29 player 3 revealed captains
+      30 player 3 revealed ambassadors
+      31 player 3 revealed contessas
+
+    Player slot 4:
+      32 player 4 coins / 12
+      33 player 4 active influence / 2
+      34 player 4 eliminated flag
+      35 player 4 revealed dukes
+      36 player 4 revealed assassins
+      37 player 4 revealed captains
+      38 player 4 revealed ambassadors
+      39 player 4 revealed contessas
+
+  Indices 40-49: this NeuralAI player's own active hand.
+
+    Own card slot 0:
+      40 card 0 is duke
+      41 card 0 is assassin
+      42 card 0 is captain
+      43 card 0 is ambassador
+      44 card 0 is contessa
+
+    Own card slot 1:
+      45 card 1 is duke
+      46 card 1 is assassin
+      47 card 1 is captain
+      48 card 1 is ambassador
+      49 card 1 is contessa
+
+    Revealed cards and missing card slots are encoded as all zeros.
+
+  Index 50: acting-player flag.
+
+      50 1 if gameState.currentPlayerIndex === this.playerId, else 0
+
+  Indices 51-57: pending action one-hot.
+
+      51 action is income
+      52 action is foreign-aid
+      53 action is tax
+      54 action is exchange
+      55 action is coup
+      56 action is assassinate
+      57 action is steal
+
+  Indices 58-62: actor one-hot.
+
+      58 actor is player 0
+      59 actor is player 1
+      60 actor is player 2
+      61 actor is player 3
+      62 actor is player 4
+
+    The actor is the player making the claim or taking the pending action. It is
+    not necessarily this NeuralAI player.
+
+  Indices 63-67: target one-hot.
+
+      63 target is player 0
+      64 target is player 1
+      65 target is player 2
+      66 target is player 3
+      67 target is player 4
+
+  Index 68: target-present flag.
+
+      68 1 if targetId is not null, else 0
+
+    This distinguishes "no target" from a target one-hot that is all zeros.
+
+  Indices 69-72: decision type one-hot.
+
+      69 chooseAction decision
+      70 challenge decision
+      71 block decision
+      72 blockClaim decision
+
+ACTION_DIM = 16
+  The number of action slots used by the action head:
+    - 4 non-targeted actions: income, foreign-aid, tax, exchange
+    - 12 targeted actions: coup/assassinate/steal across up to 4 opponent slots
+
+HIDDEN_1 = 64, HIDDEN_2 = 32
+  Default hidden-layer widths. The constructor accepts custom values, allowing
+  the code to run both Neural(64/32) and Neural(32/16).
+
+LEARNING_RATE = 0.001
+  Adam optimizer step size.
+
+GAMMA = 0.99
+  Discount factor for propagating terminal reward backward through decisions.
+
+ENTROPY_COEFF = 0.01
+  Entropy regularization weight. This rewards higher-entropy policies slightly,
+  keeping the AI from collapsing too quickly into deterministic behavior.
+
+MAX_PLAYERS = 5
+  Maximum number of player slots encoded into the state vector.
+
+MAX_OPPONENTS = 4
+  Maximum number of opponent target slots represented in the action head.
+
+CHARACTERS
+  The five Coup roles: duke, assassin, captain, ambassador, contessa.
+
+ACTIONS
+  The seven action labels that can be encoded into pending-action context:
+  income, foreign-aid, tax, exchange, coup, assassinate, steal.
+
+TRAIN_EVERY = 10
+  The AI buffers trajectories and runs one training step every 10 completed
+  games.
+
+MAX_TRAJ_STEPS = 60
+  Only the most recent 60 decisions from each game are used for training.
+
+REWARD_WIN = 1.0, REWARD_LOSS = -1.0
+  Base terminal rewards.
+
+REWARD_COIN_COEFF = 0.02
+  Extra terminal reward per coin held at the end of the game.
+
+REWARD_TURN_COEFF = 0.01
+  Extra terminal reward per decision survived. This is used as a survival proxy.
+
+
+--------------------------------------------------------------------------------
+4. BLOCK CLAIM TABLE
+--------------------------------------------------------------------------------
+
+NEURAL_BLOCK_CHARS records which characters can legally block each blockable
+action:
+
+  foreign-aid  -> duke
+  steal        -> captain or ambassador
+  assassinate  -> contessa
+
+decideBlockClaim uses this table to build a character mask. The claim head has
+five outputs, one per character, but only legal character claims are available
+for a given block.
+
+
+--------------------------------------------------------------------------------
+5. CLASS: NeuralAI
+--------------------------------------------------------------------------------
+
+NeuralAI extends AIEngine and implements the AI methods expected by the game:
+
+  - chooseAction(player, gameState, gameHistory)
+  - decideChallengeAction(action, claimantId, gameState, gameHistory)
+  - decideBlockAction(action, actorId, gameState, gameHistory)
+  - decideBlockClaim(action, actorId, gameState, gameHistory)
+  - onGameEnd(won, finalState)
+
+The constructor stores the player id, architecture size, and AI type, builds the
+model, creates an Adam optimizer, initializes trajectory buffers, enables
+training, initializes basic statistics, and tries to load saved weights.
+
+Weights are stored under:
+
+  coup_neural_ai_weights_v3_${hidden1}_${hidden2}
+
+That means a 64/32 model and a 32/16 model do not overwrite each other.
+
+
+--------------------------------------------------------------------------------
+6. MODEL ARCHITECTURE
+--------------------------------------------------------------------------------
+
+_buildModel creates a shared-backbone, multi-head policy network:
+
+  Input: 73 features
+    -> Dense(hidden1, relu), name shared_h1
+    -> Dense(hidden2, relu), name shared_h2
+    -> Head 0: Dense(16, linear), action selection
+    -> Head 1: Dense(2, linear), challenge/allow
+    -> Head 2: Dense(2, linear), block/allow
+    -> Head 3: Dense(5, linear), block-claim character
+
+The output heads produce logits, not probabilities. Softmax is applied outside
+the model during sampling and training. This is useful because invalid choices
+can be masked before softmax.
+
+The shared hidden layers let all decision types learn from a common
+representation of the Coup game state. The separate heads let each decision
+type maintain its own action space.
+
+
+--------------------------------------------------------------------------------
+7. STATE ENCODING
+--------------------------------------------------------------------------------
+
+_encodeState converts the current game state into a Float32Array of length 73.
+
+The layout is:
+
+  Per-player public features: 40 values
+    5 player slots x 8 values:
+      - coins / 12
+      - unrevealed influence count / 2
+      - eliminated flag
+      - revealed duke count
+      - revealed assassin count
+      - revealed captain count
+      - revealed ambassador count
+      - revealed contessa count
+
+  Own hand: 10 values
+    2 card slots x 5 character one-hot values. Revealed own cards are encoded
+    as zero because they are no longer active influence.
+
+  Is acting player: 1 value
+    1 if gameState.currentPlayerIndex equals this.playerId, else 0.
+
+  Pending-action context: 18 values
+    - 7-value action one-hot
+    - 5-value actor one-hot
+    - 5-value target one-hot
+    - 1 target-present flag
+
+  Decision type: 4 values
+    One-hot encoding:
+      0 = chooseAction
+      1 = challenge
+      2 = block
+      3 = blockClaim
+
+The state encoder uses MAX_PLAYERS = 5, so it only has five player slots. This
+matches the current 73-dimensional architecture, but it is a design constraint:
+if the page runs a six-player game, the sixth player is not represented in the
+neural state vector.
+
+
+--------------------------------------------------------------------------------
+8. MASKED SAMPLING
+--------------------------------------------------------------------------------
+
+_sampleFromHead performs a forward pass and samples from one output head.
+
+The method accepts:
+
+  stateVec
+    Encoded game state.
+
+  headIdx
+    Which output head to use.
+
+  validMask
+    Boolean array where true means the slot is legal/available and false means
+    the slot is invalid.
+
+If a validMask is provided, invalid logits receive a -1e9 penalty before
+softmax. This makes their probability effectively zero:
+
+  penalty = valid ? 0 : -1e9
+  maskedLogits = logits + penalty
+  probs = softmax(maskedLogits)
+
+The sampled index is returned as chosen.
+
+
+--------------------------------------------------------------------------------
+9. ACTION LIST AND VALID ACTION MASK
+--------------------------------------------------------------------------------
+
+_buildActionList builds the 16-slot action head mapping:
+
+  Slots 0-3:
+    0 income
+    1 foreign-aid
+    2 tax
+    3 exchange
+
+  Slots 4-15:
+    4-7   coup against opponent slot 0-3
+    8-11  assassinate against opponent slot 0-3
+    12-15 steal against opponent slot 0-3
+
+The opponent list includes non-self, non-eliminated players, sorted by id, and
+truncated to four opponents.
+
+The valid mask enforces basic game legality:
+
+  - At 10+ coins, only coup slots are valid.
+  - Coup requires at least 7 coins.
+  - Assassinate requires at least 3 coins.
+  - Steal is valid against live target opponents.
+  - Padding target slots are invalid.
+  - If no action is valid, income is enabled as a fallback.
+
+
+--------------------------------------------------------------------------------
+10. DECISION METHODS
+--------------------------------------------------------------------------------
+
+chooseAction:
+  Encodes the state for decision type 0, builds the 16-slot action list and
+  valid mask, samples from head 0, records the decision in the trajectory, and
+  returns the selected action object.
+
+decideChallengeAction:
+  Encodes the pending claim for decision type 1 and samples from head 1 with
+  mask [true, true]. Index 0 means allow; index 1 means challenge.
+
+decideBlockAction:
+  Encodes the pending action for decision type 2 and samples from head 2 with
+  mask [true, true]. Index 0 means allow; index 1 means block.
+
+decideBlockClaim:
+  Builds a character mask from NEURAL_BLOCK_CHARS, encodes decision type 3,
+  samples from the five-character claim head, records the decision, and returns
+  the selected legal claim. If the sampled result is somehow not allowed, it
+  falls back to the first legal block character, or duke as a final fallback.
+
+
+--------------------------------------------------------------------------------
+11. TRAJECTORY RECORDING
+--------------------------------------------------------------------------------
+
+Each sampled decision is saved into this.trajectory while training is enabled.
+The current trajectory record shape is:
+
+  {
+      stateVec: Float32Array(73),
+      headIdx: number,
+      actionIdx: number,
+      validMask: boolean[]
+  }
+
+The validMask field is important. It records the exact legal action set that was
+used when sampling. Training later reuses this mask so the log probability is
+computed under the same distribution that produced the action.
+
+
+--------------------------------------------------------------------------------
+12. END-OF-GAME REWARD PROCESSING
+--------------------------------------------------------------------------------
+
+onGameEnd(won, finalState = null) is called when a winner is known.
+
+It increments gamesPlayed and wins, then processes the saved trajectory. If no
+trajectory exists, it simply clears the trajectory and returns.
+
+The terminal reward is shaped as:
+
+  baseReward = REWARD_WIN or REWARD_LOSS
+  coinBonus  = REWARD_COIN_COEFF * finalCoins
+  turnBonus  = REWARD_TURN_COEFF * turnsSurvived
+  reward     = baseReward + coinBonus + turnBonus
+
+finalCoins is read from finalState when finalState is available.
+
+The trajectory is capped to the most recent MAX_TRAJ_STEPS decisions. Discounted
+returns are computed backward:
+
+  G[T - 1] = reward
+  G[t]     = GAMMA * G[t + 1]
+
+These returns are attached to the trajectory steps as step.G.
+
+Processed steps are appended to this._buffer. Training only occurs when
+gamesPlayed is divisible by TRAIN_EVERY.
+
+
+--------------------------------------------------------------------------------
+13. MASK-AWARE TRAINING
+--------------------------------------------------------------------------------
+
+_trainBatch performs one optimizer step over buffered trajectory data.
+
+Before training, returns are normalized across the batch:
+
+  normalized_G = (G - mean) / std
+
+Steps are grouped by output head so each head trains on only its own decisions.
+For each non-empty head group, the code prepares:
+
+  - states:  tensor2d [N, 73]
+  - returns: tensor1d [N]
+  - indices: chosen action indices
+  - masks:   the valid masks recorded during sampling
+
+Inside optimizer.minimize, the model predicts outputs for each head group.
+For the current head:
+
+  1. Get raw logits.
+  2. Determine K, the output width for that head.
+  3. Validate each stored mask. If a mask is missing or has the wrong length,
+     fall back to all-true for that row.
+  4. Build a [N, K] penalty tensor where invalid choices receive -1e9.
+  5. Add the penalty to logits.
+  6. Compute softmax and log probabilities from the masked logits.
+
+This mask-aware training was added to fix the old mismatch where sampling used
+masked logits but training used raw unmasked logits. The current behavior is:
+
+  Sampling: softmax(masked logits)
+  Training: log probability from softmax(masked logits)
+
+That keeps the policy-gradient update mathematically aligned with the policy
+that actually produced each action.
+
+The policy-gradient loss is:
+
+  pgLoss = -mean(logProb(chosenAction) * return)
+
+An entropy term is also computed:
+
+  entropy = -mean(sum(probs * logProbs))
+
+The total loss subtracts entropy times ENTROPY_COEFF:
+
+  totalLoss += pgLoss - ENTROPY_COEFF * entropy
+
+This encourages exploration while still reinforcing rewarded decisions.
+
+
+--------------------------------------------------------------------------------
+14. TENSOR MANAGEMENT
+--------------------------------------------------------------------------------
+
+Input tensors are created outside optimizer.minimize so they can safely remain
+available during backpropagation. After minimize completes, the code disposes
+states, returns, and the returned loss tensor.
+
+The sampling path uses tf.tidy, which automatically cleans up temporary tensors
+after the sampled index is computed.
+
+
+--------------------------------------------------------------------------------
+15. WEIGHT PERSISTENCE AND STATS
+--------------------------------------------------------------------------------
+
+_saveWeights:
+  Reads the model weights synchronously with dataSync, serializes shapes and
+  numeric data, and stores them in localStorage under this.weightsKey.
+
+_loadWeights:
+  Reads stored weight data from localStorage, rebuilds tensors, assigns them to
+  the model, and disposes the temporary tensors.
+
+resetWeights:
+  Removes the localStorage entry for the architecture and resets gamesPlayed
+  and wins.
+
+getStats:
+  Returns gamesPlayed, wins, and a formatted win rate.
+
+Note: weights are persisted, but gamesPlayed and wins are not persisted across
+page reloads.
+
+
+--------------------------------------------------------------------------------
+16. INDEX.HTML INTEGRATION
+--------------------------------------------------------------------------------
+
+On DOMContentLoaded, neural-ai.js patches the interactive page in three ways.
+
+First, it injects two dropdown options into AI selector dropdowns:
+
+  - Neural Network AI (64/32), value neural_64_32
+  - Neural Network AI (32/16), value neural_32_16
+
+Second, it wraps startGame. The original startGame creates RandomAI for unknown
+AI types. After the original startGame finishes, the patch replaces any selected
+neural players with NeuralAI instances and updates their aiType/name.
+
+Third, it wraps checkGameOver. When checkGameOver returns true and there is one
+active player left, the patch calls onGameEnd on every NeuralAI player and marks
+the winner by id. It passes gameState into onGameEnd so reward shaping can read
+final coin counts.
+
+
+
